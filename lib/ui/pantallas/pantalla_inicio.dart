@@ -3,7 +3,8 @@ import 'package:provider/provider.dart';
 import '../../estado/estado_app.dart';
 import 'pantalla_ajustes.dart';
 import 'pantalla_panel.dart';
-
+import '../../servicios/servicio_suscripcion.dart';
+import 'pantalla_suscripciones.dart';
 /// Contenedor principal: barra superior, contenido y barra inferior.
 class PantallaInicio extends StatefulWidget {
   const PantallaInicio({super.key});
@@ -14,7 +15,19 @@ class PantallaInicio extends StatefulWidget {
 
 class _PantallaInicioState extends State<PantallaInicio> {
   int _indice = 0;
+  @override
+  void initState() {
+    super.initState();
+    _procesarCobros();
+  }
 
+  /// Al abrir la app se cobran las suscripciones cuya fecha ya se cumplió.
+  Future<void> _procesarCobros() async {
+    final estadoApp = context.read<EstadoApp>();
+    final cantidad =
+        await ServicioSuscripcion().procesarCobrosPendientes(estadoApp.idUsuario!);
+    if (cantidad > 0) estadoApp.notificarCambio();
+  }
   static const _titulos = [
     'Panel principal',
     'Suscripciones',
@@ -55,7 +68,7 @@ class _PantallaInicioState extends State<PantallaInicio> {
         index: _indice,
         children: [
           PantallaPanel(irA: _irA),
-          const Center(child: Text('Suscripciones (CU06 y CU07)')),
+          const PantallaSuscripciones(),
           const Center(child: Text('Gastos (CU10, CU11 y CU12)')),
           PantallaAjustes(irAlPanel: () => _irA(0)),
         ],

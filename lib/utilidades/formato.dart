@@ -17,3 +17,9 @@ String fechaHoraSql(DateTime fecha) {
   String dos(int n) => n.toString().padLeft(2, '0');
   return '${fechaSql(fecha)} ${dos(fecha.hour)}:${dos(fecha.minute)}:${dos(fecha.second)}';
 }
+/// Convierte 2026-11-15 en 15/11/2026.
+String fechaLegible(String fechaSql) {
+  final partes = fechaSql.split('-');
+  if (partes.length != 3) return fechaSql;
+  return '${partes[2]}/${partes[1]}/${partes[0]}';
+}
