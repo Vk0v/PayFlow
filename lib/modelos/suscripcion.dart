@@ -1,25 +1,30 @@
-/// Una suscripción del usuario junto con el estado de su cobro en el periodo vigente.
 class Suscripcion {
   final int id;
   final String nombre;
   final double monto;
-  final int idTipo; // 1 = Ocio y consumo, 2 = Servicios y hogar
+  final int idTipo;
   final int diaCobro;
   final bool suspendida;
-  final int? idCobro; // id en suscripcion_periodo
-  final int? idEstadoCobro; // 1 pendiente, 2 pagada, 3 vencida, 4 suspendida
-  final String? fechaCobro;
+  final bool autocobro;
+  final int? idSp; // id de suscripcion_periodo del periodo vigente
+  final int? estadoSp; // 1 pendiente, 2 pagada, 3 vencida, 4 suspendida
+  final String? fechaProgramada;
+  final String? fechaReal;
+  final int intentos;
 
-  Suscripcion({
+  const Suscripcion({
     required this.id,
     required this.nombre,
     required this.monto,
     required this.idTipo,
     required this.diaCobro,
     required this.suspendida,
-    required this.idCobro,
-    required this.idEstadoCobro,
-    required this.fechaCobro,
+    required this.autocobro,
+    this.idSp,
+    this.estadoSp,
+    this.fechaProgramada,
+    this.fechaReal,
+    this.intentos = 0,
   });
 
   factory Suscripcion.desdeMapa(Map<String, Object?> m) => Suscripcion(
@@ -29,21 +34,22 @@ class Suscripcion {
         idTipo: m['id_tipo_suscripcion'] as int,
         diaCobro: m['dia_cobro'] as int,
         suspendida: (m['suspendida'] as int) == 1,
-        idCobro: m['id_cobro'] as int?,
-        idEstadoCobro: m['id_estado_cobro'] as int?,
-        fechaCobro: m['fecha_cobro'] as String?,
+        autocobro: (m['autocobro'] as int) == 1,
+        idSp: m['id_sp'] as int?,
+        estadoSp: m['estado_sp'] as int?,
+        fechaProgramada: m['fecha_prog'] as String?,
+        fechaReal: m['fecha_real'] as String?,
+        intentos: (m['intentos'] as int?) ?? 0,
       );
 
-  String get textoEstado => switch (idEstadoCobro) {
-        1 => 'Pendiente',
-        2 => 'Pagada',
-        3 => 'Vencida',
-        4 => 'Suspendida',
-        _ => 'Sin cobro',
-      };
+  String get tipo => idTipo == 1 ? 'Ocio y consumo' : 'Servicios y hogar';
+  bool get pagada => !suspendida && estadoSp == 2;
+  bool get vencida => !suspendida && estadoSp == 3;
+  bool get pendiente => !suspendida && (estadoSp == null || estadoSp == 1);
+  bool get puedePagar =>
+      !suspendida && idSp != null && (estadoSp == 1 || estadoSp == 3);
 
-  String get textoTipo => idTipo == 1 ? 'Ocio y consumo' : 'Servicios y hogar';
-
-  /// Se puede cobrar si está pendiente o vencida.
-  bool get sePuedePagar => idEstadoCobro == 1 || idEstadoCobro == 3;
+  String get textoEstado => suspendida
+      ? 'Suspendida'
+      : (pagada ? 'Pagada' : (vencida ? 'Vencida' : 'Pendiente'));
 }

@@ -1,241 +1,312 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../estado/estado_app.dart';
-import '../../modelos/suscripcion.dart';
-import '../../servicios/servicio_suscripcion.dart';
-import '../../utilidades/formato.dart';
-import 'pantalla_formulario_suscripcion.dart';
+import 'package:payflow/estado/estado_app.dart';
+import 'package:payflow/modelos/suscripcion.dart';
+import 'package:payflow/servicios/servicio_suscripcion.dart';
+import 'package:payflow/utilidades/formato.dart';
+import 'package:payflow/utilidades/tema.dart';
+import 'package:payflow/ui/widgets/componentes.dart';
+import 'package:payflow/ui/widgets/cuadros.dart';
+import 'package:payflow/ui/pantallas/pantalla_formulario_suscripcion.dart';
 
 class PantallaSuscripciones extends StatefulWidget {
   const PantallaSuscripciones({super.key});
 
   @override
-  State<PantallaSuscripciones> createState() => _PantallaSuscripcionesState();
+  State<PantallaSuscripciones> createState() => _EstadoSuscripciones();
 }
 
-class _PantallaSuscripcionesState extends State<PantallaSuscripciones> {
-  late Future<List<Suscripcion>> _futuro;
+class _EstadoSuscripciones extends State<PantallaSuscripciones> {
+  Future<List<Suscripcion>>? _futuro;
   int _revisionVista = -1;
-  final _servicio = ServicioSuscripcion();
 
-  Color _colorEstado(int? idEstado) => switch (idEstado) {
-        1 => Colors.orange,
-        2 => Colors.green,
-        3 => Colors.red,
-        4 => Colors.grey,
-        _ => Colors.blueGrey,
-      };
+  void _avisar() => context.read<EstadoApp>().notificarCambio();
 
-  Future<bool> _confirmar(String titulo, String mensaje) async {
-    final respuesta = await showDialog<bool>(
-      context: context,
-      builder: (dialogo) => AlertDialog(
-        title: Text(titulo),
-        content: Text(mensaje),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogo, false),
-              child: const Text('Cancelar')),
-          FilledButton(
-              onPressed: () => Navigator.pop(dialogo, true),
-              child: const Text('Confirmar')),
-        ],
-      ),
-    );
-    return respuesta == true;
+  Future<void> _agregar() async {
+    await Navigator.of(context).push<bool>(MaterialPageRoute(
+        builder: (_) => const PantallaFormularioSuscripcion()));
   }
 
-  Future<void> _abrirFormulario({Suscripcion? existente}) async {
-    final estadoApp = context.read<EstadoApp>();
-    final guardado = await Navigator.push<bool>(
+  Future<void> _pagar(Suscripcion s) async {
+    final ok = await mostrarConfirmacion(
       context,
-      MaterialPageRoute(
-          builder: (_) => PantallaFormularioSuscripcion(existente: existente)),
+      titulo: '¿Pagar suscripción?',
+      mensaje:
+          'Se descontarán **${dinero(s.monto)}** de tu saldo disponible por **${s.nombre}**.',
+      textoSi: 'Pagar ahora',
     );
-    if (guardado == true) estadoApp.notificarCambio();
-  }
-
-  Future<void> _pagarAhora(Suscripcion s) async {
-    final estadoApp = context.read<EstadoApp>();
-    final mensajero = ScaffoldMessenger.of(context);
-    final seguro = await _confirmar('¿Pagar ahora?',
-        'Se descontarán ${dinero(s.monto)} de tu saldo disponible por "${s.nombre}".');
-    if (!seguro) return;
-
-    final resultado = await _servicio.cobrar(s.idCobro!);
-    estadoApp.notificarCambio();
-    mensajero.showSnackBar(SnackBar(
-      content: Text(switch (resultado) {
-        ResultadoCobro.pagado => 'Pago registrado: ${dinero(s.monto)}.',
-        ResultadoCobro.rechazado =>
-          'Saldo insuficiente. La suscripción quedó vencida.',
-        ResultadoCobro.noAplica => 'Este cobro ya no se puede pagar.',
-      }),
-    ));
-  }
-
-  Future<void> _cambiarSuspension(Suscripcion s) async {
-    final estadoApp = context.read<EstadoApp>();
-    final seguro = await _confirmar(
-        s.suspendida ? '¿Reactivar suscripción?' : '¿Suspender suscripción?',
-        s.suspendida
-            ? '"${s.nombre}" volverá a cobrarse en su fecha.'
-            : '"${s.nombre}" no se cobrará mientras esté suspendida.');
-    if (!seguro) return;
-
-    if (s.suspendida) {
-      await _servicio.reactivar(s.id);
+    if (!ok || !mounted) return;
+    final r = await ServicioSuscripcion.cobrar(s.idSp!);
+    if (!mounted) return;
+    _avisar();
+    if (r == ResultadoCobro.pagado) {
+      await mostrarAviso(context,
+          titulo: 'Pago registrado',
+          mensaje: 'Se pagó **${s.nombre}** correctamente.');
+    } else if (r == ResultadoCobro.rechazado) {
+      await mostrarAviso(context,
+          titulo: 'Saldo insuficiente',
+          mensaje:
+              'No se pudo cobrar **${s.nombre}**: tu saldo disponible no cubre ${dinero(s.monto)}.',
+          icono: Icons.error_outline,
+          color: Colores.rojo);
     } else {
-      await _servicio.suspender(s.id);
+      await mostrarAviso(context,
+          titulo: 'No se puede pagar',
+          mensaje:
+              'Esta suscripción no puede cobrarse ahora. Revisa que tus fondos estén configurados y sin déficit.',
+          icono: Icons.info_outline,
+          color: Colores.ambar);
     }
-    estadoApp.notificarCambio();
+  }
+
+  Future<void> _suspender(Suscripcion s) async {
+    final ok = await mostrarConfirmacion(
+      context,
+      titulo: '¿Suspender suscripción?',
+      mensaje:
+          '**${s.nombre}** dejará de cobrarse mientras esté suspendida. Podrás reactivarla cuando quieras.',
+      textoSi: 'Suspender',
+      peligro: true,
+    );
+    if (!ok || !mounted) return;
+    await ServicioSuscripcion.suspender(s.id);
+    if (mounted) _avisar();
+  }
+
+  Future<void> _reactivar(Suscripcion s) async {
+    final ok = await mostrarConfirmacion(
+      context,
+      titulo: '¿Reactivar suscripción?',
+      mensaje: '**${s.nombre}** volverá a cobrarse en su fecha de pago.',
+      textoSi: 'Reactivar',
+    );
+    if (!ok || !mounted) return;
+    await ServicioSuscripcion.reactivar(s.id);
+    if (mounted) _avisar();
   }
 
   Future<void> _eliminar(Suscripcion s) async {
-    final estadoApp = context.read<EstadoApp>();
-    final seguro = await _confirmar('¿Eliminar suscripción?',
-        'Se eliminará "${s.nombre}" y sus cobros pendientes. Esta acción no se puede deshacer.');
-    if (!seguro) return;
-
-    await _servicio.eliminar(s.id);
-    estadoApp.notificarCambio();
+    final ok = await mostrarConfirmacion(
+      context,
+      titulo: '¿Eliminar suscripción?',
+      mensaje:
+          'Se dará de baja **${s.nombre}**. Los cobros ya realizados se conservan en tu historial.',
+      textoSi: 'Eliminar',
+      peligro: true,
+    );
+    if (!ok || !mounted) return;
+    await ServicioSuscripcion.eliminar(s.id);
+    if (mounted) _avisar();
   }
 
-  void _mostrarDetalle(Suscripcion s) {
-    showModalBottomSheet(
+  Future<void> _detalle(Suscripcion s) async {
+    await showDialog<void>(
       context: context,
-      builder: (hoja) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(s.nombre,
-                  style: const TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text('Monto: ${dinero(s.monto)}'),
-              Text('Tipo: ${s.textoTipo}'),
-              Text('Día de cobro: ${s.diaCobro}'),
-              if (s.fechaCobro != null)
-                Text('Próximo cobro: ${fechaLegible(s.fechaCobro!)}'),
-              Text('Estado: ${s.textoEstado}'),
-              const SizedBox(height: 12),
-              if (s.sePuedePagar)
-                FilledButton(
-                    onPressed: () {
-                      Navigator.pop(hoja);
-                      _pagarAhora(s);
-                    },
-                    child: const Text('Pagar ahora')),
-              OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(hoja);
-                    _abrirFormulario(existente: s);
-                  },
-                  child: const Text('Editar')),
-              OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(hoja);
-                    _cambiarSuspension(s);
-                  },
-                  child: Text(s.suspendida ? 'Reactivar' : 'Suspender')),
-              TextButton(
-                  onPressed: () {
-                    Navigator.pop(hoja);
-                    _eliminar(s);
-                  },
-                  child: const Text('Eliminar',
-                      style: TextStyle(color: Colors.red))),
-            ],
-          ),
+      builder: (ctx) => VentanaPF(
+        titulo: s.nombre,
+        icono: Icons.autorenew,
+        contenido: Column(
+          children: [
+            FilaDato('Monto', dinero(s.monto)),
+            FilaDato('Tipo', s.tipo),
+            FilaDato('Día de cobro', 'Día ${s.diaCobro} de cada mes'),
+            if (s.fechaProgramada != null)
+              FilaDato('Próximo cobro', fechaLarga(s.fechaProgramada!)),
+            FilaDato('Autodébito', s.autocobro ? 'Activado' : 'Desactivado'),
+            FilaDato('Estado', s.textoEstado),
+            if (s.intentos > 0) FilaDato('Intentos de cobro', '${s.intentos}'),
+          ],
         ),
+        acciones: [
+          BotonPF(
+            texto: 'Editar',
+            icono: Icons.edit_outlined,
+            alPresionar: () {
+              Navigator.pop(ctx);
+              Navigator.of(context).push<bool>(MaterialPageRoute(
+                  builder: (_) => PantallaFormularioSuscripcion(suscripcion: s)));
+            },
+          ),
+          BotonPF(
+            texto: 'Eliminar',
+            tipo: TipoBoton.peligro,
+            icono: Icons.delete_outline,
+            alPresionar: () {
+              Navigator.pop(ctx);
+              _eliminar(s);
+            },
+          ),
+          BotonPF(
+              texto: 'Cerrar',
+              tipo: TipoBoton.secundario,
+              alPresionar: () => Navigator.pop(ctx)),
+        ],
       ),
     );
-  }
-
-  Future<void> _actualizar() async {
-    final estadoApp = context.read<EstadoApp>();
-    await _servicio.procesarCobrosPendientes(estadoApp.idUsuario!);
-    estadoApp.notificarCambio();
   }
 
   @override
   Widget build(BuildContext context) {
-    final estadoApp = context.watch<EstadoApp>();
-    if (estadoApp.revision != _revisionVista) {
-      _revisionVista = estadoApp.revision;
-      _futuro = _servicio.listar(estadoApp.idUsuario!);
+    final app = context.watch<EstadoApp>();
+    if (_futuro == null || _revisionVista != app.revision) {
+      _revisionVista = app.revision;
+      _futuro = ServicioSuscripcion.listar(app.idUsuario!);
     }
+    return FutureBuilder<List<Suscripcion>>(
+      future: _futuro,
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return ListView(padding: const EdgeInsets.all(16), children: [
+            CajaMensaje(nivel: NivelMensaje.error, texto: 'Error: ${snap.error}'),
+          ]);
+        }
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final lista = snap.data!;
+        final activas = lista.where((s) => !s.suspendida).toList();
+        final compromiso = activas.fold<double>(0, (a, s) => a + s.monto);
+        final proximos =
+            lista.where((s) => s.pendiente && s.fechaProgramada != null).take(3).toList();
 
-    return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _abrirFormulario(),
-        icon: const Icon(Icons.add),
-        label: const Text('Agregar'),
-      ),
-      body: FutureBuilder<List<Suscripcion>>(
-        future: _futuro,
-        builder: (context, instantanea) {
-          if (instantanea.hasError) {
-            return const Center(
-                child: Text('No fue posible consultar tus suscripciones.'));
-          }
-          if (!instantanea.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final lista = instantanea.data!;
-          if (lista.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                    'Aún no tienes suscripciones registradas.\nToca "Agregar" para registrar la primera.',
-                    textAlign: TextAlign.center),
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            TarjetaPF(
+              hijo: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const EtiquetaSeccion('Compromiso mensual'),
+                  Text(dinero(compromiso),
+                      style:
+                          const TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
+                  Text('${activas.length} suscripciones activas',
+                      style: const TextStyle(color: Colores.gris, fontSize: 12)),
+                ],
               ),
-            );
-          }
-
-          final totalMensual = lista
-              .where((s) => !s.suspendida)
-              .fold<double>(0, (suma, s) => suma + s.monto);
-
-          return RefreshIndicator(
-            onRefresh: _actualizar,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-              children: [
-                Card(
-                  child: ListTile(
-                    title: const Text('Total mensual en suscripciones'),
-                    trailing: Text(dinero(totalMensual),
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                for (final s in lista)
-                  Card(
-                    child: ListTile(
-                      onTap: () => _mostrarDetalle(s),
-                      title: Text(s.nombre),
-                      subtitle: Text(
-                          '${dinero(s.monto)} · día ${s.diaCobro} · ${s.textoTipo}'),
-                      trailing: Chip(
-                        label: Text(s.textoEstado,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 12)),
-                        backgroundColor: _colorEstado(s.idEstadoCobro),
-                        visualDensity: VisualDensity.compact,
+            ),
+            BotonPF(
+                texto: 'Agregar suscripción', icono: Icons.add, alPresionar: _agregar),
+            const SizedBox(height: 16),
+            TarjetaPF(
+              hijo: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const EtiquetaSeccion('Próximos cobros'),
+                  if (proximos.isEmpty)
+                    const Text('No tienes cobros pendientes este periodo.',
+                        style: TextStyle(color: Colores.gris)),
+                  for (final s in proximos)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(s.nombre,
+                                    style: const TextStyle(fontWeight: FontWeight.w700)),
+                                Text(
+                                    '${textoDias(diasHasta(s.fechaProgramada!))} · ${diaYMes(s.fechaProgramada!)}',
+                                    style: const TextStyle(
+                                        color: Colores.gris, fontSize: 12)),
+                              ],
+                            ),
+                          ),
+                          Text(dinero(s.monto),
+                              style: const TextStyle(fontWeight: FontWeight.w800)),
+                        ],
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          );
-        },
+            const EtiquetaSeccion('Tus suscripciones'),
+            if (lista.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(8),
+                child: Text('Aún no registras suscripciones.',
+                    style: TextStyle(color: Colores.gris)),
+              ),
+            for (final s in lista) _tarjeta(s),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _tarjeta(Suscripcion s) {
+    Color color = Colores.ambar;
+    Color fondo = Colores.ambarClaro;
+    if (s.suspendida) {
+      color = Colores.gris;
+      fondo = Colores.grisClaro;
+    } else if (s.pagada) {
+      color = Colores.verde;
+      fondo = Colores.verdeClaro;
+    } else if (s.vencida) {
+      color = Colores.rojo;
+      fondo = Colores.rojoClaro;
+    }
+    return TarjetaPF(
+      alTocar: () => _detalle(s),
+      hijo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const IconoCuadro(Icons.autorenew),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(s.nombre,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800, fontSize: 15)),
+                    Text('${dinero(s.monto)} · día ${s.diaCobro}',
+                        style: const TextStyle(color: Colores.gris, fontSize: 12)),
+                  ],
+                ),
+              ),
+              EtiquetaEstado(s.textoEstado, color, fondo),
+            ],
+          ),
+          if (s.autocobro)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: EtiquetaEstado('Autodébito', Colores.azul, Colores.azulClaro),
+            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              if (s.puedePagar) ...[
+                Expanded(
+                  child: BotonPF(
+                      texto: 'Pagar ahora',
+                      compacto: true,
+                      alPresionar: () => _pagar(s)),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Expanded(
+                child: s.suspendida
+                    ? BotonPF(
+                        texto: 'Reactivar',
+                        tipo: TipoBoton.verde,
+                        compacto: true,
+                        alPresionar: () => _reactivar(s))
+                    : BotonPF(
+                        texto: 'Suspender',
+                        tipo: TipoBoton.secundario,
+                        compacto: true,
+                        alPresionar: () => _suspender(s)),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

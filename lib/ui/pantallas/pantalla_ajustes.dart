@@ -1,26 +1,61 @@
 import 'package:flutter/material.dart';
-import 'vista_config_periodo.dart';
+import 'package:payflow/utilidades/tema.dart';
+import 'package:payflow/ui/pantallas/vista_config_periodo.dart';
+import 'package:payflow/ui/pantallas/vista_metas.dart';
 
-class PantallaAjustes extends StatelessWidget {
-  final VoidCallback irAlPanel;
-  const PantallaAjustes({super.key, required this.irAlPanel});
+class PantallaAjustes extends StatefulWidget {
+  const PantallaAjustes({super.key});
 
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-        length: 2,
-        child: Column(
-          children: [
-            const TabBar(tabs: [
-              Tab(text: 'Metas de ahorro'),
-              Tab(text: 'Ajustes y cortes'),
-            ]),
-            Expanded(
-              child: TabBarView(children: [
-                const Center(child: Text('Metas de ahorro (CU08 y CU09)')),
-                VistaConfigPeriodo(irAlPanel: irAlPanel),
-              ]),
-            ),
-          ],
+  State<PantallaAjustes> createState() => _EstadoAjustes();
+}
+
+class _EstadoAjustes extends State<PantallaAjustes> {
+  int _tab = 0;
+
+  Widget _pastilla(String texto, int i) {
+    final sel = _tab == i;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _tab = i),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: sel ? Colores.marino : Colors.white,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colores.borde),
+          ),
+          child: Text(texto,
+              style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: sel ? Colors.white : Colores.texto)),
         ),
-      );
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Row(
+            children: [
+              _pastilla('Fondos del periodo', 0),
+              const SizedBox(width: 8),
+              _pastilla('Metas de ahorro', 1),
+            ],
+          ),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: _tab,
+            children: const [VistaConfigPeriodo(), VistaMetas()],
+          ),
+        ),
+      ],
+    );
+  }
 }

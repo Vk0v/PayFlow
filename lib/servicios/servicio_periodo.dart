@@ -1,150 +1,139 @@
-import '../datos/base_datos.dart';
-import '../modelos/periodo.dart';
-import '../utilidades/formato.dart';
-import 'servicio_estado.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:payflow/datos/base_datos.dart';
+import 'package:payflow/modelos/periodo.dart';
+import 'package:payflow/utilidades/formato.dart';
+import 'package:payflow/servicios/servicio_estado.dart';
 
 enum ResultadoConfig { ok, deficit, yaConfigurado }
 
 class ServicioPeriodo {
-  /// Periodo abierto más reciente del usuario, o null si no hay.
-  Future<Periodo?> vigente(int idUsuario) async {
-    final bd = await BaseDatos.instancia;
-    final filas = await bd.query('periodo',
+  /// Periodo abierto (no cerrado) del usuario, o null si no hay.
+  static Future<Periodo?> vigente(int idUsuario) async {
+    final db = await BaseDatos.abrir();
+    final f = await db.query('periodo',
         where: 'id_usuario = ? AND cerrado = 0',
         whereArgs: [idUsuario],
         orderBy: 'id_periodo DESC',
         limit: 1);
-    return filas.isEmpty ? null : Periodo.desdeMapa(filas.first);
+    return f.isEmpty ? null : Periodo.desdeMapa(f.first);
   }
 
-  /// Registra el periodo (CU03) y evalúa la viabilidad del ahorro (CU04).
-  /// Todo ocurre en una sola transacción: si algo falla, no se guarda nada.
-  Future<ResultadoConfig> configurar({
-    required int idUsuario,
-    required double pmt,
-    required double ahorro,
-  }) async {
-    final bd = await BaseDatos.instancia;
-    final ahora = DateTime.now();
-    final inicio = DateTime(ahora.year, ahora.month, 1);
-    final fin = DateTime(ahora.year, ahora.month + 1, 0);
-    final fechaHora = fechaHoraSql(ahora);
-
-    return bd.transaction<ResultadoConfig>((tx) async {
-      // ---------- CU03: registrar el periodo ----------
-      final existente = await tx.query('periodo',
+  static Future<ResultadoConfig> configurar(
+      int idUsuario, double pmt, double ahorro) async {
+    final db = await BaseDatos.abrir();
+    return db.transaction<ResultadoConfig>((txn) async {
+      final ahora = DateTime.now();
+      final ts = fechaHoraSql(ahora);
+      final f = await txn.query('periodo',
           where: 'id_usuario = ? AND cerrado = 0',
           whereArgs: [idUsuario],
           orderBy: 'id_periodo DESC',
           limit: 1);
+      final existente = f.isEmpty ? null : f.first;
+      if (existente != null && existente['id_estado_financiero'] != 1) {
+        return ResultadoConfig.yaConfigurado;
+      }
 
-      final Map<String, Object?> datos = {
+      final deficit = pmt <= ahorro;
+      final Map<String, Object?> valores = {
         'presupuesto_mensual_total': pmt,
         'ahorro_objetivo': ahorro,
+        'ahorro_reservado': deficit ? 0.0 : ahorro,
+        'saldo_disponible': deficit ? 0.0 : redondear2(pmt - ahorro),
+        'id_estado_financiero': deficit ? 1 : 2,
       };
 
+      final anio = existente == null ? ahora.year : existente['anio'] as int;
+      final mes = existente == null ? ahora.month : existente['mes'] as int;
       int idPeriodo;
-      if (existente.isEmpty) {
-        idPeriodo = await tx.insert('periodo', {
-          ...datos,
+      if (existente == null) {
+        idPeriodo = await txn.insert('periodo', {
+          ...valores,
           'id_usuario': idUsuario,
-          'anio': ahora.year,
-          'mes': ahora.month,
-          'fecha_inicio': fechaSql(inicio),
-          'fecha_fin': fechaSql(fin),
-          'fecha_creacion': fechaHora,
+          'anio': anio,
+          'mes': mes,
+          'fecha_inicio': fechaSql(DateTime(anio, mes, 1)),
+          'fecha_fin': fechaSql(DateTime(anio, mes + 1, 0)),
+          'cerrado': 0,
+          'fecha_creacion': ts,
         });
       } else {
-        final estado = existente.first['id_estado_financiero'] as int?;
-        if (estado != null && estado != 1) return ResultadoConfig.yaConfigurado;
-        idPeriodo = existente.first['id_periodo'] as int;
-        await tx.update('periodo', datos,
+        idPeriodo = existente['id_periodo'] as int;
+        await txn.update('periodo', valores,
             where: 'id_periodo = ?', whereArgs: [idPeriodo]);
       }
 
-      // ---------- CU04: evaluar viabilidad del ahorro ----------
-      if (pmt <= ahorro) {
-        await tx.update(
-            'periodo',
-            {
-              'id_estado_financiero': 1, // ALERTA_DEFICIT
-              'ahorro_reservado': 0,
-              'saldo_disponible': 0,
-            },
-            where: 'id_periodo = ?',
-            whereArgs: [idPeriodo]);
-        await tx.insert('alerta', {
-          'id_periodo': idPeriodo,
-          'id_tipo_alerta': 1, // DEFICIT
-          'mensaje':
-              'Tu presupuesto mensual no alcanza para cubrir el monto destinado a ahorro.',
-          'fecha_hora': fechaHora,
-          'atendida': 0,
-        });
-        await tx.insert('historial_estado_financiero', {
-          'id_periodo': idPeriodo,
-          'id_estado': 1,
-          'fecha_hora': fechaHora,
-        });
+      if (deficit) {
+        final hay = await txn.query('alerta',
+            where: 'id_periodo = ? AND id_tipo_alerta = 1 AND atendida = 0',
+            whereArgs: [idPeriodo],
+            orderBy: 'id_alerta');
+        if (hay.isEmpty) {
+          await txn.insert('alerta', {
+            'id_periodo': idPeriodo,
+            'id_tipo_alerta': 1,
+            'mensaje': 'Alerta de déficit presupuestario en Ajustes de fondos',
+            'fecha_hora': ts,
+            'atendida': 0,
+          });
+        } else {
+          for (var i = 1; i < hay.length; i++) {
+            await txn.delete('alerta',
+                where: 'id_alerta = ?', whereArgs: [hay[i]['id_alerta']]);
+          }
+        }
+        if (existente == null) {
+          await txn.insert('historial_estado_financiero',
+              {'id_periodo': idPeriodo, 'id_estado': 1, 'fecha_hora': ts});
+        }
+        await ServicioEstado.recalcular(txn, idPeriodo);
         return ResultadoConfig.deficit;
       }
 
-      // Hay presupuesto suficiente: se reserva primero el ahorro.
-      final saldo = redondear2(pmt - ahorro);
-
-      await tx.update(
-          'periodo',
-          {
-            'ahorro_reservado': ahorro,
-            'saldo_disponible': saldo,
-            'id_estado_financiero': 2, // SALUDABLE (luego se recalcula)
-          },
-          where: 'id_periodo = ?',
-          whereArgs: [idPeriodo]);
-
-      await tx.insert('movimiento', {
+      // Configuración correcta
+      await txn.update('alerta', {'atendida': 1},
+          where: 'id_periodo = ? AND id_tipo_alerta = 1', whereArgs: [idPeriodo]);
+      await txn.insert('historial_estado_financiero',
+          {'id_periodo': idPeriodo, 'id_estado': 2, 'fecha_hora': ts});
+      await txn.insert('movimiento', {
         'id_periodo': idPeriodo,
-        'id_tipo_movimiento': 2, // RESERVA_AHORRO
-        'monto': ahorro,
-        'saldo_anterior': pmt,
-        'saldo_posterior': saldo,
-        'fecha_hora': fechaHora,
-        'descripcion': 'Reserva de ahorro del periodo',
+        'id_tipo_movimiento': 1,
+        'monto': pmt,
+        'saldo_anterior': 0.0,
+        'saldo_posterior': pmt,
+        'fecha_hora': ts,
+        'descripcion': 'Asignación del PMT',
       });
-
-      // Distribución del saldo por categoría.
-      // REGLA DEL EQUIPO: primero las suscripciones activas;
-      // lo que sobre se reparte 50 % Servicios y 50 % Ocio.
-      final sumaSuscripciones = await tx.rawQuery(
-          'SELECT COALESCE(SUM(monto), 0) AS total FROM suscripcion '
-          'WHERE id_usuario = ? AND activa = 1 AND suspendida = 0',
-          [idUsuario]);
-      final suscripciones = (sumaSuscripciones.first['total'] as num).toDouble();
-      final resto =
-          (saldo - suscripciones) < 0 ? 0.0 : redondear2(saldo - suscripciones);
-      final servicios = redondear2(resto / 2);
-      final ocio = redondear2(resto - servicios);
-
-      await tx.delete('presupuesto_categoria',
-          where: 'id_periodo = ?', whereArgs: [idPeriodo]);
-      final asignaciones = {1: ahorro, 2: suscripciones, 3: servicios, 4: ocio};
-      for (final entrada in asignaciones.entries) {
-        await tx.insert('presupuesto_categoria', {
+      if (ahorro > 0) {
+        await txn.insert('movimiento', {
           'id_periodo': idPeriodo,
-          'id_categoria': entrada.key,
-          'monto_asignado': entrada.value,
-          'monto_ejecutado': 0,
+          'id_tipo_movimiento': 2,
+          'monto': ahorro,
+          'saldo_anterior': pmt,
+          'saldo_posterior': redondear2(pmt - ahorro),
+          'fecha_hora': ts,
+          'descripcion': 'Reserva de ahorro objetivo',
         });
       }
-
-      // Historial inicial y recálculo del estado (CU05).
-      await tx.insert('historial_estado_financiero', {
-        'id_periodo': idPeriodo,
-        'id_estado': 2,
-        'fecha_hora': fechaHora,
-      });
-      await ServicioEstado().recalcular(tx, idPeriodo);
-
+      // Suscripciones activas entran al periodo como pendientes (o suspendidas)
+      final subs = await txn.query('suscripcion',
+          where: 'id_usuario = ? AND activa = 1', whereArgs: [idUsuario]);
+      for (final s in subs) {
+        await txn.insert(
+          'suscripcion_periodo',
+          {
+            'id_suscripcion': s['id_suscripcion'],
+            'id_periodo': idPeriodo,
+            'monto_cobro': s['monto'],
+            'fecha_cobro_programada':
+                fechaDeCobro(anio, mes, s['dia_cobro'] as int),
+            'id_estado_suscripcion': (s['suspendida'] as int) == 1 ? 4 : 1,
+            'intentos_cobro': 0,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+      await ServicioEstado.recalcular(txn, idPeriodo);
       return ResultadoConfig.ok;
     });
   }

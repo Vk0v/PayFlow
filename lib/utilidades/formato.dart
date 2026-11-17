@@ -1,25 +1,81 @@
 import 'package:intl/intl.dart';
 
-final _formatoDinero = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+String dinero(double v) =>
+    NumberFormat.currency(locale: 'en_US', symbol: '\$', decimalDigits: 2)
+        .format(v);
 
-/// Convierte 1500 en "$1,500.00".
-String dinero(num valor) => _formatoDinero.format(valor);
+double redondear2(double v) => (v * 100).roundToDouble() / 100;
 
-/// Redondea a 2 decimales para evitar errores de punto flotante.
-double redondear2(double valor) => (valor * 100).roundToDouble() / 100;
+String _dos(int n) => n.toString().padLeft(2, '0');
 
-/// Fecha en formato de base de datos: 2026-11-15
-String fechaSql(DateTime fecha) =>
-    '${fecha.year}-${fecha.month.toString().padLeft(2, '0')}-${fecha.day.toString().padLeft(2, '0')}';
+String fechaSql(DateTime f) => '${f.year}-${_dos(f.month)}-${_dos(f.day)}';
 
-/// Fecha y hora en formato de base de datos: 2026-11-15 22:50:31
-String fechaHoraSql(DateTime fecha) {
-  String dos(int n) => n.toString().padLeft(2, '0');
-  return '${fechaSql(fecha)} ${dos(fecha.hour)}:${dos(fecha.minute)}:${dos(fecha.second)}';
+String fechaHoraSql(DateTime f) =>
+    '${fechaSql(f)} ${_dos(f.hour)}:${_dos(f.minute)}:${_dos(f.second)}';
+
+const _meses = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+String nombreMes(int m) => _meses[m - 1];
+
+String nombreMesTitulo(int m) {
+  final n = nombreMes(m);
+  return n[0].toUpperCase() + n.substring(1);
 }
-/// Convierte 2026-11-15 en 15/11/2026.
-String fechaLegible(String fechaSql) {
-  final partes = fechaSql.split('-');
-  if (partes.length != 3) return fechaSql;
-  return '${partes[2]}/${partes[1]}/${partes[0]}';
+
+String nombreCategoria(int id) {
+  switch (id) {
+    case 1:
+      return 'Ahorro';
+    case 2:
+      return 'Suscripciones';
+    case 3:
+      return 'Servicios';
+    default:
+      return 'Ocio';
+  }
+}
+
+String fechaLarga(String s) {
+  final f = DateTime.parse(s);
+  return '${f.day} de ${nombreMes(f.month)} de ${f.year}';
+}
+
+String diaYMes(String s) {
+  final f = DateTime.parse(s);
+  return '${f.day} ${nombreMes(f.month).substring(0, 3)}';
+}
+
+String fechaHoraLarga(String s) {
+  final f = DateTime.parse(s);
+  return '${f.day} de ${nombreMes(f.month)} de ${f.year}, ${_dos(f.hour)}:${_dos(f.minute)}';
+}
+
+String fechaCorta(String s) {
+  final f = DateTime.parse(s);
+  return '${_dos(f.day)}/${_dos(f.month)}/${f.year}';
+}
+
+/// Fecha de cobro del mes; si el día no existe (31 en abril) usa el último día.
+String fechaDeCobro(int anio, int mes, int dia) {
+  final ultimo = DateTime(anio, mes + 1, 0).day;
+  return fechaSql(DateTime(anio, mes, dia > ultimo ? ultimo : dia));
+}
+
+int diasHasta(String s) {
+  final f = DateTime.parse(s);
+  final h = DateTime.now();
+  return DateTime(f.year, f.month, f.day)
+      .difference(DateTime(h.year, h.month, h.day))
+      .inDays;
+}
+
+String textoDias(int d) {
+  if (d == 0) return 'Hoy';
+  if (d == 1) return 'Mañana';
+  if (d > 1) return 'En $d días';
+  if (d == -1) return 'Ayer';
+  return 'Hace ${-d} días';
 }

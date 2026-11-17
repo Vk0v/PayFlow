@@ -1,87 +1,80 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../estado/estado_app.dart';
-import 'pantalla_ajustes.dart';
-import 'pantalla_panel.dart';
-import '../../servicios/servicio_suscripcion.dart';
-import 'pantalla_suscripciones.dart';
-/// Contenedor principal: barra superior, contenido y barra inferior.
+import 'package:payflow/estado/estado_app.dart';
+import 'package:payflow/servicios/servicio_corte.dart';
+import 'package:payflow/servicios/servicio_suscripcion.dart';
+import 'package:payflow/ui/widgets/encabezado.dart';
+import 'package:payflow/ui/pantallas/pantalla_ajustes.dart';
+import 'package:payflow/ui/pantallas/pantalla_corte.dart';
+import 'package:payflow/ui/pantallas/pantalla_gastos.dart';
+import 'package:payflow/ui/pantallas/pantalla_panel.dart';
+import 'package:payflow/ui/pantallas/pantalla_suscripciones.dart';
+
 class PantallaInicio extends StatefulWidget {
   const PantallaInicio({super.key});
 
   @override
-  State<PantallaInicio> createState() => _PantallaInicioState();
+  State<PantallaInicio> createState() => _EstadoPantallaInicio();
 }
 
-class _PantallaInicioState extends State<PantallaInicio> {
+class _EstadoPantallaInicio extends State<PantallaInicio> {
   int _indice = 0;
+
   @override
   void initState() {
     super.initState();
-    _procesarCobros();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _arranque());
   }
 
-  /// Al abrir la app se cobran las suscripciones cuya fecha ya se cumplió.
-  Future<void> _procesarCobros() async {
-    final estadoApp = context.read<EstadoApp>();
-    final cantidad =
-        await ServicioSuscripcion().procesarCobrosPendientes(estadoApp.idUsuario!);
-    if (cantidad > 0) estadoApp.notificarCambio();
+  /// Al entrar: corte de caja automático (si terminó el mes) y autodébitos.
+  Future<void> _arranque() async {
+    final app = context.read<EstadoApp>();
+    final id = app.idUsuario;
+    if (id == null) return;
+    final corte = await ServicioCorte.ejecutarSiCorresponde(id);
+    await ServicioSuscripcion.procesarAutocobros(id);
+    if (!mounted) return;
+    app.notificarCambio();
+    if (corte != null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PantallaCorte(corte: corte)),
+      );
+    }
   }
-  static const _titulos = [
-    'Panel principal',
-    'Suscripciones',
-    'Gastos',
-    'Ajustes y fondos',
-  ];
-
-  void _irA(int indice) => setState(() => _indice = indice);
 
   @override
   Widget build(BuildContext context) {
-    final nombre = context.watch<EstadoApp>().nombreUsuario;
-
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_titulos[_indice]),
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.notifications_outlined),
-              onPressed: () {}), // CU13: centro de alertas
-          PopupMenuButton<String>(
-            onSelected: (opcion) {
-              if (opcion == 'salir') context.read<EstadoApp>().cerrarSesion();
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'salir', child: Text('Cerrar sesión')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.only(right: 12, left: 8),
-              child: CircleAvatar(
-                  child: Text(nombre.isEmpty ? '?' : nombre[0].toUpperCase())),
-            ),
-          ),
-        ],
-      ),
-      // IndexedStack mantiene las 4 secciones vivas al cambiar de pestaña.
+      appBar: const EncabezadoPF(),
       body: IndexedStack(
         index: _indice,
         children: [
-          PantallaPanel(irA: _irA),
+          PantallaPanel(irAjustes: () => setState(() => _indice = 3)),
           const PantallaSuscripciones(),
-          const Center(child: Text('Gastos (CU10, CU11 y CU12)')),
-          PantallaAjustes(irAlPanel: () => _irA(0)),
+          const PantallaGastos(),
+          const PantallaAjustes(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _indice,
-        onDestinationSelected: _irA,
+        onDestinationSelected: (i) => setState(() => _indice = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: 'Panel'),
           NavigationDestination(
-              icon: Icon(Icons.subscriptions_outlined), label: 'Suscripciones'),
-          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: 'Gastos'),
-          NavigationDestination(icon: Icon(Icons.savings_outlined), label: 'Ajustes'),
+              icon: Icon(Icons.dashboard_outlined),
+              selectedIcon: Icon(Icons.dashboard),
+              label: 'Panel principal'),
+          NavigationDestination(
+              icon: Icon(Icons.autorenew),
+              selectedIcon: Icon(Icons.autorenew),
+              label: 'Suscripciones'),
+          NavigationDestination(
+              icon: Icon(Icons.receipt_long_outlined),
+              selectedIcon: Icon(Icons.receipt_long),
+              label: 'Gastos'),
+          NavigationDestination(
+              icon: Icon(Icons.tune),
+              selectedIcon: Icon(Icons.tune),
+              label: 'Ajustes de fondos'),
         ],
       ),
     );

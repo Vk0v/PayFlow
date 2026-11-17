@@ -1,222 +1,235 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../estado/estado_app.dart';
-import '../../modelos/periodo.dart';
-import '../../servicios/servicio_panel.dart';
-import '../../utilidades/formato.dart';
+import 'package:payflow/estado/estado_app.dart';
+import 'package:payflow/modelos/periodo.dart';
+import 'package:payflow/servicios/servicio_panel.dart';
+import 'package:payflow/utilidades/formato.dart';
+import 'package:payflow/utilidades/tema.dart';
+import 'package:payflow/ui/widgets/componentes.dart';
 
 class PantallaPanel extends StatefulWidget {
-  final void Function(int) irA;
-  const PantallaPanel({super.key, required this.irA});
+  final VoidCallback irAjustes;
+  const PantallaPanel({super.key, required this.irAjustes});
 
   @override
-  State<PantallaPanel> createState() => _PantallaPanelState();
+  State<PantallaPanel> createState() => _EstadoPanel();
 }
 
-class _PantallaPanelState extends State<PantallaPanel> {
-  late Future<DatosPanel> _futuro;
+class _EstadoPanel extends State<PantallaPanel> {
+  Future<DatosPanel>? _futuro;
   int _revisionVista = -1;
 
-  /// Etiqueta, mensaje y color según el estado financiero del periodo.
-  ({String etiqueta, String mensaje, Color color}) _aspectoEstado(
-      Periodo? periodo) {
-    switch (periodo?.idEstado) {
-      case 1:
-        return (
-          etiqueta: 'Déficit',
-          mensaje: 'Tu presupuesto mensual no alcanza para cubrir el monto '
-              'destinado a ahorro. Los gastos están bloqueados.',
-          color: Colors.red
-        );
+  static const _iconos = {
+    1: Icons.savings_outlined,
+    2: Icons.autorenew,
+    3: Icons.bolt_outlined,
+    4: Icons.celebration_outlined,
+  };
+
+  String _mensajeEstado(int id) {
+    switch (id) {
       case 2:
-        return (
-          etiqueta: 'Saludable',
-          mensaje: 'Tus finanzas del mes van bien. Sigue así.',
-          color: Colors.green
-        );
+        return 'Tus fondos cubren tus compromisos del mes.';
       case 3:
-        return (
-          etiqueta: 'En Riesgo',
-          mensaje: 'Tu saldo libre es menor al 10 % de tu presupuesto mensual. '
-              'Cuida tus gastos.',
-          color: Colors.orange
-        );
+        return 'Tu saldo es menor al 10 % del PMT. Cuida tus gastos.';
       case 4:
-        return (
-          etiqueta: 'Crítico',
-          mensaje: 'Tus suscripciones pendientes superan tu saldo libre. Evita '
-              'nuevos gastos de ocio y revisa tus próximos cobros para no '
-              'incumplir pagos.',
-          color: Colors.red
-        );
+        return 'Tu saldo no cubre tus suscripciones pendientes.';
       default:
-        return (
-          etiqueta: 'Sin configurar',
-          mensaje: 'Completa la configuración del periodo para comenzar.',
-          color: Colors.grey
-        );
+        return 'El ahorro objetivo es igual o mayor al PMT. Corrige tus fondos en Ajustes.';
     }
   }
 
-  Widget _tarjeta(Widget contenido, {Color? borde}) => Card(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: borde ?? Colors.transparent, width: 1.5),
-        ),
-        child: Padding(padding: const EdgeInsets.all(16), child: contenido),
-      );
-
-  /// Proporción entre 0 y 1 para las barras de progreso.
-  double _proporcion(double parte, double total) =>
-      total <= 0 ? 0 : (parte / total).clamp(0.0, 1.0);
-
-  Widget _fila(String etiqueta, String valor) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [Text(etiqueta), Text(valor)],
-        ),
-      );
-
   @override
   Widget build(BuildContext context) {
-    final estadoApp = context.watch<EstadoApp>();
-    // Si los datos cambiaron, se vuelven a consultar.
-    if (estadoApp.revision != _revisionVista) {
-      _revisionVista = estadoApp.revision;
-      _futuro = ServicioPanel().cargar(estadoApp.idUsuario!);
+    final app = context.watch<EstadoApp>();
+    if (_futuro == null || _revisionVista != app.revision) {
+      _revisionVista = app.revision;
+      _futuro = ServicioPanel.cargar(app.idUsuario!);
     }
+    return RefreshIndicator(
+      onRefresh: () async => context.read<EstadoApp>().notificarCambio(),
+      child: FutureBuilder<DatosPanel>(
+        future: _futuro,
+        builder: (context, snap) {
+          if (snap.hasError) {
+            return ListView(padding: const EdgeInsets.all(16), children: [
+              CajaMensaje(
+                  nivel: NivelMensaje.error, texto: 'Error: ${snap.error}'),
+            ]);
+          }
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return ListView(
+              padding: const EdgeInsets.all(16),
+              children: _contenido(snap.data!));
+        },
+      ),
+    );
+  }
 
-    return FutureBuilder<DatosPanel>(
-      future: _futuro,
-      builder: (context, instantanea) {
-        if (instantanea.hasError) {
-          return const Center(
-              child: Text('No fue posible consultar la información financiera.'));
-        }
-        if (!instantanea.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+  List<Widget> _contenido(DatosPanel d) {
+    final p = d.periodo;
+    if (p == null) {
+      return [
+        TarjetaPF(
+          hijo: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const EtiquetaSeccion('Estado del mes'),
+              const EtiquetaEstado('Sin configurar', Colores.gris, Colores.grisClaro),
+              const SizedBox(height: 12),
+              const Text(
+                  'Aún no defines tu presupuesto mensual (PMT) ni tu ahorro objetivo.',
+                  style: TextStyle(color: Colores.gris)),
+              const SizedBox(height: 14),
+              BotonPF(texto: 'Configurar fondos', alPresionar: widget.irAjustes),
+            ],
+          ),
+        ),
+      ];
+    }
+    return [
+      _tarjetaEstado(p),
+      _tarjetaSaldo(p, d),
+      _tarjetaMeta(p, d),
+      _tarjetaGastos(p, d),
+    ];
+  }
 
-        final datos = instantanea.data!;
-        final periodo = datos.periodo;
-        final aspecto = _aspectoEstado(periodo);
-        // Solo tiene valor cuando el periodo ya está configurado.
-        final cfg = (periodo != null && periodo.configurado) ? periodo : null;
+  Widget _tarjetaEstado(Periodo p) {
+    final color = colorEstado(p.idEstado);
+    return TarjetaPF(
+      borde: color.withOpacity(0.4),
+      fondo: fondoEstado(p.idEstado),
+      hijo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EtiquetaSeccion('Estado del mes'),
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, color: color),
+              const SizedBox(width: 8),
+              Text(p.textoEstado,
+                  style: TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w800, color: color)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(_mensajeEstado(p.idEstado),
+              style: const TextStyle(color: Colores.texto)),
+          const SizedBox(height: 6),
+          Text('Periodo: ${p.textoPeriodo}',
+              style: const TextStyle(color: Colores.gris, fontSize: 12)),
+          if (p.enDeficit) ...[
+            const SizedBox(height: 12),
+            BotonPF(
+                texto: 'Ir a Ajustes de fondos',
+                compacto: true,
+                alPresionar: widget.irAjustes),
+          ],
+        ],
+      ),
+    );
+  }
 
-        List<double> categoria(int id) => datos.categorias[id] ?? [0, 0];
+  Widget _tarjetaSaldo(Periodo p, DatosPanel d) {
+    return TarjetaPF(
+      hijo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EtiquetaSeccion('Saldo disponible'),
+          Text(dinero(p.saldo),
+              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 2),
+          Text('de ${dinero(p.pmt)} de presupuesto mensual (PMT)',
+              style: const TextStyle(color: Colores.gris, fontSize: 12)),
+          const SizedBox(height: 12),
+          BarraProgreso(
+              valor: p.pmt > 0 ? p.saldo / p.pmt : 0,
+              color: colorEstado(p.idEstado)),
+          if (d.pendientes > 0) ...[
+            const SizedBox(height: 14),
+            FilaDato('Cobros pendientes',
+                '${d.pendientes} · ${dinero(d.comprometido)}'),
+            if (d.proximoNombre != null)
+              FilaDato('Próximo cobro',
+                  '${d.proximoNombre} · ${diaYMes(d.proximaFecha!)}'),
+          ],
+        ],
+      ),
+    );
+  }
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // ---- Estado del mes ----
-            _tarjeta(
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Estado del mes',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Chip(
-                    label: Text(aspecto.etiqueta,
-                        style: const TextStyle(color: Colors.white)),
-                    backgroundColor: aspecto.color,
-                  ),
-                  Text(aspecto.mensaje),
-                  if (periodo == null ||
-                      periodo.idEstado == null ||
-                      periodo.enDeficit) ...[
-                    const SizedBox(height: 8),
-                    FilledButton(
-                        onPressed: () => widget.irA(3),
-                        child: const Text('Configurar el periodo')),
-                  ],
-                  if (periodo?.idEstado == 3 || periodo?.idEstado == 4) ...[
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                        onPressed: () => widget.irA(1),
-                        child: const Text('Ver mis suscripciones')),
-                  ],
-                ],
-              ),
-              borde: aspecto.color,
-            ),
+  Widget _tarjetaMeta(Periodo p, DatosPanel d) {
+    final v = p.ahorroObjetivo > 0 ? d.aportado / p.ahorroObjetivo : 0.0;
+    return TarjetaPF(
+      hijo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EtiquetaSeccion('Meta de ahorro'),
+          Text('${dinero(d.aportado)} de ${dinero(p.ahorroObjetivo)}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4),
+          const Text('Aportado a tus metas este periodo',
+              style: TextStyle(color: Colores.gris, fontSize: 12)),
+          const SizedBox(height: 10),
+          BarraProgreso(valor: v, color: Colores.verde),
+        ],
+      ),
+    );
+  }
 
-            // ---- Saldo disponible ----
-            _tarjeta(Column(
+  Widget _tarjetaGastos(Periodo p, DatosPanel d) {
+    return TarjetaPF(
+      hijo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EtiquetaSeccion('Gastos realizados'),
+          Text(dinero(p.gastado),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 12),
+          for (final id in [1, 2, 3, 4]) _filaCategoria(id, d),
+        ],
+      ),
+    );
+  }
+
+  Widget _filaCategoria(int id, DatosPanel d) {
+    final v = d.categorias[id] ?? [0.0, 0.0];
+    final asignado = v[0];
+    final ejecutado = v[1];
+    final pasado = id != 1 && ejecutado > asignado + 0.001;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          IconoCuadro(_iconos[id]!, tam: 36),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Saldo disponible',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(cfg != null ? dinero(cfg.saldo) : '—',
-                    style: const TextStyle(
-                        fontSize: 30, fontWeight: FontWeight.bold)),
-                if (cfg == null)
-                  const Text('Aparecerá cuando se configure el PMT.')
-                else ...[
-                  Text('PMT: ${dinero(cfg.pmt)}'),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(
-                      value: _proporcion(cfg.saldo, cfg.pmt)),
-                  Text('${(_proporcion(cfg.saldo, cfg.pmt) * 100).toStringAsFixed(1)} % '
-                      'del presupuesto disponible'),
-                ],
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(nombreCategoria(id),
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                    Text('${dinero(ejecutado)} de ${dinero(asignado)}',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: pasado ? Colores.rojo : Colores.gris)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                BarraProgreso(
+                    valor: asignado > 0 ? ejecutado / asignado : 0,
+                    color: pasado ? Colores.rojo : Colores.verde),
               ],
-            )),
-
-            if (cfg != null) ...[
-              // ---- Meta de ahorro ----
-              _tarjeta(Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Meta de ahorro',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(
-                      '${dinero(cfg.ahorroReservado)} de ${dinero(cfg.ahorroObjetivo)}'),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(
-                      value: _proporcion(cfg.ahorroReservado, cfg.ahorroObjetivo)),
-                  const Text('Monto reservado con éxito'),
-                ],
-              )),
-
-              // ---- Gastos realizados ----
-              _tarjeta(Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Gastos realizados',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(dinero(redondear2(cfg.pmt - cfg.ahorroReservado - cfg.saldo)),
-                      style: const TextStyle(
-                          fontSize: 24, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(
-                      value: _proporcion(cfg.pmt - cfg.ahorroReservado - cfg.saldo,
-                          cfg.pmt - cfg.ahorroReservado)),
-                  Text(datos.proximoCobro == null
-                      ? 'Sin cobros pendientes'
-                      : 'Próximo cobro: ${dinero(datos.proximoCobro!)}'),
-                ],
-              )),
-
-              // ---- Resumen por categoría ----
-              _tarjeta(Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Resumen por categoría',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  _fila('Suscripciones', '${dinero(categoria(2)[0])} / mes'),
-                  _fila('Servicios y hogar',
-                      '${dinero(categoria(3)[1])} / ${dinero(categoria(3)[0])}'),
-                  _fila('Ocio y consumo',
-                      '${dinero(categoria(4)[1])} / ${dinero(categoria(4)[0])}'),
-                ],
-              )),
-            ],
-          ],
-        );
-      },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
